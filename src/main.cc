@@ -20,6 +20,7 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
+#include <QCoreApplication>
 #include <QProcess>
 #include <QString>
 #include <QStringList>
@@ -48,6 +49,7 @@ bool Trace(const QStringList& args) {
   Tracer::Options opts;
   opts.output_filename = args[0] + ".trace";
   opts.args = args.mid(1);
+  opts.working_directory = QDir::currentPath();
 
   if (!FLAGS_project_name.empty()) {
     opts.project_name = utils::str::StlToQt(FLAGS_project_name);
@@ -155,32 +157,11 @@ bool FromAptCommand(const QStringList& args) {
 
 
 bool GenBazel(const QStringList& args) {
-  const QString make_name = args[0];
-  const QString install_name = args[1];
-  const QString workspace = args[2];
-
-  // Read the targets.
-  auto make_fh =
-      make_unique<utils::RecordFile<pb::Record>>(make_name + ".targets");
-  if (!make_fh->Open(QIODevice::ReadOnly)) {
-    LOG(ERROR) << "Failed to open " << make_fh->filename() << " for reading";
-    return false;
-  }
-
-  // Read the installed files.
-  auto installed_files_fh =
-      make_unique<utils::RecordFile<pb::Record>>(install_name + ".files");
-  if (!installed_files_fh->Open(QIODevice::ReadOnly)) {
-    LOG(ERROR) << "Failed to open " << installed_files_fh->filename()
-               << " for reading";
-    return false;
-  }
-
-  gen::bazel::Generator gen(workspace);
-  gen.Generate(std::move(make_fh),
-               std::move(installed_files_fh));
-
-  return true;
+  gen::bazel::Generator::Options opts;
+  opts.target_filename = args[0] + ".targets";
+  opts.installed_files_filename = args[1] + ".files";
+  opts.workspace_path = args[2];
+  return gen::bazel::Generator::Run(opts);
 }
 
 
@@ -241,6 +222,8 @@ int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
   FLAGS_logtostderr = true;
+
+  QCoreApplication app(argc, argv);
 
   return utils::RunSubcommand(argc, argv, kSubcommands);
 }

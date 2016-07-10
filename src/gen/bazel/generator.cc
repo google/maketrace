@@ -28,8 +28,31 @@ namespace bazel {
 static const char* kGeneratedFilePrefix = "_generated/";
 static const char* kPublicHeaderPrefix = "public_headers/";
 
-Generator::Generator(const QString& workspace_dir)
-    : workspace_dir_(workspace_dir) {
+bool Generator::Run(const Options& opts) {
+  // Read the targets.
+  auto make_fh =
+      make_unique<utils::RecordFile<pb::Record>>(opts.target_filename);
+  if (!make_fh->Open(QIODevice::ReadOnly)) {
+    LOG(ERROR) << "Failed to open " << make_fh->filename() << " for reading";
+    return false;
+  }
+
+  // Read the installed files.
+  auto installed_files_fh =
+      make_unique<utils::RecordFile<pb::Record>>(opts.installed_files_filename);
+  if (!installed_files_fh->Open(QIODevice::ReadOnly)) {
+    LOG(ERROR) << "Failed to open " << installed_files_fh->filename()
+               << " for reading";
+    return false;
+  }
+
+  Generator gen(opts);
+  gen.Generate(std::move(make_fh), std::move(installed_files_fh));
+  return true;
+}
+
+Generator::Generator(const Options& opts)
+    : opts_(opts) {
 }
 
 void Generator::AddTargetRecursive(const pb::BuildTarget& target, Rule* rule) {
@@ -181,7 +204,7 @@ void Generator::Generate(
   }
 
   // Copy all the source files into the workspace.
-  const QString package_dir = workspace_dir_ + "/" + package_;
+  const QString package_dir = opts_.workspace_path + "/" + package_;
   for (const pb::Reference& ref : source_files_) {
     const QString source = AbsoluteSourceFilePath(ref);
     QString destination;

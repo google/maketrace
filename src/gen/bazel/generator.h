@@ -28,13 +28,26 @@ class Label;
 
 class Generator {
  public:
-  explicit Generator(const QString& workspace_dir);
+  struct Options {
+    // Read build target records from this file.
+    QString target_filename;
+
+    // Read InstalledFile records from this file.
+    QString installed_files_filename;
+
+    // Write BUILD files to this directory.
+    QString workspace_path;
+  };
+
+  static bool Run(const Options& opts);
+
+ private:
+  Generator(const Options& opts);
 
   void Generate(
       std::unique_ptr<utils::RecordFile<pb::Record>> target_records,
       std::unique_ptr<utils::RecordFile<pb::Record>> installed_file_records);
 
- private:
   Label ConvertLabel(const Label& label);
   void AddTargetRecursive(const pb::BuildTarget& target, Rule* rule);
 
@@ -42,7 +55,7 @@ class Generator {
   QString AbsoluteSourceFilePath(const pb::Reference& ref) const;
   static void CopyFile(const QString& source, const QString& dest);
 
-  const QString workspace_dir_;
+  const Options opts_;
   QString package_;
 
   pb::MetaData metadata_;

@@ -20,67 +20,131 @@
 #include "analysis/make.h"
 #include "utils/logging.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QProcess>
-#include <QTemporaryDir>
+#include <QRegularExpression>
+#include <QTextStream>
 
 FromApt::FromApt(const QString& package)
     : package_(package) {
+  dir_.setAutoRemove(false);
+  source_dir_ = dir_.path() + "/source";
+  output_dir_ = dir_.path() + "/output";
+
+  QDir().mkdir(source_dir_);
+  QDir().mkdir(output_dir_);
+}
+
+FromApt::Buildsystem FromApt::GuessBuildsystem() const {
+  if (QFileInfo(source_dir_ + "/configure").isExecutable()) {
+    return Buildsystem::Autotools;
+  }
+  if (QFile::exists(source_dir_ + "/CMakeLists.txt")) {
+    return Buildsystem::CMake;
+  }
+  return Buildsystem::Unknown;
 }
 
 bool FromApt::Run() {
-  QTemporaryDir dir;
-  CHECK(dir.isValid());
-  dir.setAutoRemove(false);
-  LOG(INFO) << "Using temporary directory " << dir.path();
+  CHECK(dir_.isValid());
+  LOG(INFO) << "Using temporary directory " << dir_.path();
 
-  if (!RunCommand(dir.path(), {"apt-get", "source", package_})) {
-    LOG(ERROR) << "apt-get source failed";
+  // Write a dockerfile.
+  QFile dockerfile(dir_.path() + "/Dockerfile");
+  dockerfile.open(QFile::WriteOnly);
+  QTextStream ts(&dockerfile);
+  ts << QString(
+      "FROM ubuntu:trusty\n"
+      "RUN mkdir /source /output\n"
+      "RUN apt-get update && apt-get install -y libqt5core5a "
+          "libqt5concurrent5\n"
+      "RUN apt-get update && apt-get build-dep -y %1\n"
+      "RUN cd /source && apt-get update && apt-get source %1\n"
+      "RUN cp -ar /source/*/* /source/\n"
+      "ADD tracer /usr/bin/\n"
+      "WORKDIR /source\n").arg(package_);
+  dockerfile.close();
+
+  // Copy the tracer binary.
+  QFile::copy(QCoreApplication::applicationFilePath(),
+              dir_.path() + "/tracer");
+
+  // Build the docker container.
+  QByteArray output;
+  if (!RunCommand(dir_.path(), {"docker", "build", "."}, &output)) {
+    LOG(ERROR) << "docker build failed";
     return false;
   }
 
-  // Find the directory that apt-get source created.
-  const QStringList entries =
-      QDir(dir.path()).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-  if (entries.empty()) {
-    LOG(ERROR) << "apt-get source didn't create any directories";
+  // Find the name of the image we just built.
+  const QRegularExpression image_re("Successfully built ([a-f0-9]+)");
+  const QRegularExpressionMatch match =
+      image_re.match(QString::fromUtf8(output));
+  if (!match.hasMatch()) {
+    LOG(ERROR) << "couldn't find image hash in docker build output:" << output;
     return false;
   }
-  package_dir_ = QDir(dir.path());
-  package_dir_.cd(entries[0]);
-  if (entries.count() != 1) {
-    LOG(WARNING) << "apt-get source created multiple directories, using "
-                 << package_dir_.path();
+  image_ = match.captured(1);
+
+  // Copy the source.
+  if (!RunCommand(dir_.path(), {
+                  "docker", "run",
+                  "-v", source_dir_ + ":/mounted-source",
+                  image_,
+                  "bash", "-c", "cp -r /source/* /mounted-source/"})) {
+    LOG(ERROR) << "rsync failed";
+    return false;
   }
 
-  if (QFileInfo(package_dir_, "configure").isExecutable()) {
-    LOG(INFO) << "Detected autotools build system";
-    if (!Autotools()) {
+  // Guess the buildsystem.
+  const Buildsystem buildsystem = GuessBuildsystem();
+  switch (buildsystem) {
+  case Buildsystem::Autotools: {
+    if (!RunTracer({"trace", "/output/configure", "./configure"})) {
+      LOG(ERROR) << "configure failed";
       return false;
     }
-  } else {
-    LOG(ERROR) << "Unknown build system";
+
+    // Replace the 'missing' and 'config.status' scripts with empty shell
+    // scripts to prevent 'make' from rerunning './configure'.
+    WriteEmptyShellScript("config.status");
+    WriteEmptyShellScript("missing");
+
+    if (!RunTracer({"trace", "/output/make", "make"})) {
+      LOG(ERROR) << "make failed";
+      return false;
+    }
+    if (!RunTracer({"trace", "/output/install", "make", "install"})) {
+      LOG(ERROR) << "install failed";
+      return false;
+    }
+    break;
+  }
+
+  default:
+    LOG(ERROR) << "unsupported buildsystem: " << int(buildsystem);
     return false;
   }
 
   analysis::Configure::Options conf_opts;
-  conf_opts.trace_filename = "configure.trace";
-  conf_opts.output_filename = "configure.files";
+  conf_opts.trace_filename = output_dir_ + "/configure.trace";
+  conf_opts.output_filename = output_dir_ + "/configure.files";
   if (!analysis::Configure::Run(conf_opts)) {
     return false;
   }
 
   analysis::Install::Options install_opts;
-  install_opts.trace_filename = "install.trace";
-  install_opts.output_filename = "install.files";
+  install_opts.trace_filename = output_dir_ + "/install.trace";
+  install_opts.output_filename = output_dir_ + "/install.files";
   if (!analysis::Install::Run(install_opts)) {
     return false;
   }
 
   analysis::Make::Options make_opts;
-  make_opts.trace_filename = "make.trace";
+  make_opts.trace_filename = output_dir_ + "/make.trace";
   make_opts.install_filename = install_opts.output_filename;
-  make_opts.output_filename = "make.targets";
+  make_opts.output_filename = output_dir_ + "/make.targets";
   if (!analysis::Make::Run(make_opts)) {
     return false;
   }
@@ -88,50 +152,52 @@ bool FromApt::Run() {
   return true;
 }
 
-bool FromApt::Autotools() {
-  if (!TraceCommand("configure.trace", {"./configure"}, package_dir_.path())) {
-    LOG(ERROR) << "configure failed";
-    return false;
-  }
-
-  if (!TraceCommand("make.trace", {"make"}, package_dir_.path())) {
-    LOG(ERROR) << "make failed";
-    return false;
-  }
-
-  if (!TraceCommand("install.trace",
-                    {"make", "install"},
-                    package_dir_.path())) {
-    LOG(ERROR) << "install failed";
-    return false;
-  }
-  return true;
-}
-
 bool FromApt::RunCommand(const QString& working_directory,
-                         const QStringList& args) const {
+                         const QStringList& args,
+                         QByteArray* output) const {
   LOG(INFO) << "Running " << args << " in " << working_directory;
   QProcess proc;
   proc.setWorkingDirectory(working_directory);
   proc.setProgram(args[0]);
   proc.setArguments(args.mid(1));
+  if (output) {
+    proc.setProcessChannelMode(QProcess::ForwardedErrorChannel);
+  } else {
+    proc.setProcessChannelMode(QProcess::ForwardedChannels);
+  }
   proc.start();
   proc.waitForStarted(-1);
   if (proc.state() != QProcess::Running) {
     return false;
   }
   proc.waitForFinished(-1);
-  return proc.exitStatus() == QProcess::NormalExit;
+  if (output) {
+    *output = proc.readAllStandardOutput();
+  }
+  return proc.exitCode() == 0;
 }
 
-bool FromApt::TraceCommand(const QString& output_name,
-                           const QStringList& args,
-                           const QString& working_directory) const {
-  Tracer::Options opts;
-  opts.output_filename = output_name;
-  opts.args = args;
-  opts.working_directory = working_directory;
-  opts.project_name = package_;
+bool FromApt::RunTracer(const QStringList& args, QByteArray* output) const {
+  QStringList all_args = {
+      "docker", "run",
+      "-v", output_dir_ + ":/output",
+      "-v", source_dir_ + ":/source",
+  };
+  if (args[0] == "trace") {
+    all_args.append("--privileged");
+  }
+  all_args.append(image_);
+  all_args.append("/usr/bin/tracer");
+  all_args.append("--");
+  all_args.append(args);
+  return RunCommand(dir_.path(), all_args, output);
+}
 
-  return Tracer::Run(opts);
+void FromApt::WriteEmptyShellScript(const QString& filename) const {
+  QFile f(source_dir_ + "/" + filename);
+  LOG(INFO) << "Writing empty shell script: " << f.fileName();
+  f.open(QFile::WriteOnly);
+  f.write("#!/bin/bash\n");
+  f.close();
+  f.setPermissions(QFile::Permissions(0x0755));
 }

@@ -17,6 +17,7 @@
 
 #include <QDir>
 #include <QString>
+#include <QTemporaryDir>
 
 class FromApt {
  public:
@@ -25,17 +26,26 @@ class FromApt {
   bool Run();
 
  private:
-  bool RunCommand(const QString& working_directory,
-                  const QStringList& args) const;
-  bool TraceCommand(const QString& output_name,
-                    const QStringList& args,
-                    const QString& working_directory) const;
+  enum class Buildsystem {
+    Unknown,
+    Autotools,
+    CMake,
+  };
 
-  bool Autotools();
+  bool RunCommand(const QString& working_directory,
+                  const QStringList& args,
+                  QByteArray* output = nullptr) const;
+  bool RunTracer(const QStringList& args,
+                 QByteArray* output = nullptr) const;
+  Buildsystem GuessBuildsystem() const;
+  void WriteEmptyShellScript(const QString& filename) const;
 
   const QString package_;
 
-  QDir package_dir_;
+  QTemporaryDir dir_;
+  QString source_dir_;
+  QString output_dir_;
+  QString image_;
 };
 
 #endif // FROMAPT_H

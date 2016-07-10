@@ -25,8 +25,8 @@ add_executable(protoc-qt compiler/cli_main.cc)
 target_link_libraries(protoc-qt
   generator
   Qt5::Core
-  ${PROTOBUF_LIBRARY}
   ${PROTOBUF_PROTOC_LIBRARY}
+  ${PROTOBUF_LIBRARY}
 )
 
 set(RUNTIME_SOURCES

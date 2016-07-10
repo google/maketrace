@@ -57,7 +57,7 @@ void PrintCommandList(ArrayType subcommands, QTextStream& s) {
     << "Commands:\n";
 
   for (const SubcommandSpec& spec : subcommands) {
-    s << "    " << qSetFieldWidth(16) << spec.name << qSetFieldWidth(0)
+    s << "    " << qSetFieldWidth(18) << spec.name << qSetFieldWidth(0)
       << spec.description.split('\n')[0] << "\n";
   }
 }

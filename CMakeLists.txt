@@ -1,13 +1,16 @@
 project(maketrace)
 cmake_minimum_required(VERSION 2.8)
 
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
 find_package(gflags REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Qt5Concurrent)
 find_package(Qt5Core)
-pkg_check_modules(GLOG REQUIRED libglog)
+find_library(GLOG_LIBRARY glog)
 find_library(GFLAGS_LIBRARY gflags)
+find_library(UNWIND_LIBRARY unwind)
+find_library(LZMA_LIBRARY lzma)
 find_package(Threads)
 
 add_definitions(${QT_DEFINITIONS})
@@ -15,7 +18,6 @@ include_directories(${CMAKE_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${gflags_INCLUDE_DIR})
 include_directories(${PROTOBUF_INCLUDE_DIRS})
-include_directories(${GLOG_INCLUDE_DIRS})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall -pedantic")
 
@@ -86,7 +88,9 @@ target_link_libraries(tracer
   Qt5::Concurrent
   ${CMAKE_THREAD_LIBS_INIT}
   ${GFLAGS_LIBRARY}
-  ${GLOG_LIBRARIES}
+  ${UNWIND_LIBRARY}
+  ${LZMA_LIBRARY}
+  ${GLOG_LIBRARY}
   ${PROTOBUF_LIBRARY}
   protobuf_qt
 )

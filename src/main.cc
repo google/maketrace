@@ -23,7 +23,6 @@
 #include <QProcess>
 #include <QString>
 #include <QStringList>
-#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTextStream>
 
@@ -42,11 +41,6 @@ DEFINE_string(project_name, "", "The name of the project.  Default is to guess "
               "from the name of the project_root directory");
 DEFINE_string(project_root, "", "The directory containing the source code, if "
               "different to the current directory");
-DEFINE_bool(redirect_root, false, "If set, writes made to files outside the "
-            "project root will be redirected to a temporary directory instead. "
-            "This will allow 'make install' to be run as a non-privileged user "
-            "even when installing into /usr");
-
 
 namespace {
 
@@ -54,11 +48,6 @@ bool Trace(const QStringList& args) {
   Tracer::Options opts;
   opts.output_filename = args[0] + ".trace";
   opts.args = args.mid(1);
-
-  QTemporaryDir temp_dir;
-  if (FLAGS_redirect_root) {
-    opts.redirect_root = temp_dir.path();
-  }
 
   if (!FLAGS_project_name.empty()) {
     opts.project_name = utils::str::StlToQt(FLAGS_project_name);

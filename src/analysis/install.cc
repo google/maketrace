@@ -65,8 +65,8 @@ void Install::FindInstalledFiles() {
 
     // Don't check for access type - files that exist already with the same
     // contents will count as a read-only access.
-    if (file->redirected() &&
-        file->has_sha1_after()) {
+    if (file->has_sha1_after() &&
+        ref.type() == pb::Reference_Type_ABSOLUTE) {
       installed_files[ref] = file->sha1_after();
     }
   }

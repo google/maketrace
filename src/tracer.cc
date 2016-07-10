@@ -78,7 +78,6 @@ struct Tracer::FileState {
   QByteArray sha1_before;
   QString renamed_from;
 
-  bool redirected = false;
   bool unlinked = false;
 
   int open_ordering = 0;
@@ -128,9 +127,6 @@ struct Tracer::PidState {
   // Set by syscall-enter-stop and unset by syscall-exit-stop.
   bool in_syscall = false;
 
-  // The current syscall's path was modified to be within redirect_root_.
-  bool path_is_redirected = false;
-
   // execve is special because it resets the process' address space, making its
   // arguments unreadable when the syscall returns.  They're stored here
   // temporarily so they're available in syscall-exit-stop.
@@ -144,13 +140,6 @@ struct Tracer::PidState {
   // Set before an open or unlink system call, so the contents of the file can
   // be recorded before it's truncated by open() or removed by unlink().
   QByteArray file_contents_sha1;
-
-  // An 8k block allocated in the traced process for us to play with.  Used for
-  // writing redirected filenames to be passed to syscalls.
-  uint64_t scratch_space = 0;
-  bool needs_hijack = false;  // Set to true after an exec.
-  bool in_hijack = false;  // The current syscall is our mmap.
-  Tracer::Registers hijack_registers;  // Original registers before the mmap.
 };
 
 
@@ -203,10 +192,6 @@ Tracer::Tracer(const Options& opts)
     if (dash != -1) {
       opts_.project_name = opts_.project_name.left(dash);
     }
-  }
-
-  if (!opts_.redirect_root.isEmpty()) {
-    QDir().mkpath(opts_.redirect_root);
   }
 }
 
@@ -306,10 +291,6 @@ void Tracer::FillMetadata(pb::MetaData* metadata) {
     metadata->set_build_dir(
         utils::path::MakeRelativeTo(QDir::currentPath(),
                                     opts_.project_root));
-  }
-
-  if (!opts_.redirect_root.isNull()) {
-    metadata->set_redirect_root(opts_.redirect_root);
   }
 }
 
@@ -486,10 +467,6 @@ void Tracer::WriteFileProtos(PidState* state) {
 
     fpb->set_close_ordering(file.close_ordering);
 
-    if (file.redirected) {
-      fpb->set_redirected(true);
-    }
-
     if (file.unlinked) {
       fpb->set_access(pb::File_Access_DELETED);
     } else if (!file.renamed_from.isEmpty()) {
@@ -607,25 +584,6 @@ void Tracer::HandleSyscallStart(PidState* state) {
   Registers regs;
   regs.FromPid(state->pid);
 
-  if (state->needs_hijack &&
-      !opts_.redirect_root.isNull() &&
-      state->scratch_space == 0 &&
-      !state->in_hijack) {
-    state->in_hijack = true;
-    state->hijack_registers = regs;
-    state->hijack_registers.instruction_pointer -= 2;  // length of syscall
-
-    regs.syscall = __NR_mmap;
-    regs.args[0] = 0;  // addr
-    regs.args[1] = 8 * 1024;  // length
-    regs.args[2] = PROT_READ | PROT_WRITE;  // prot
-    regs.args[3] = MAP_PRIVATE | MAP_ANONYMOUS;  // flags
-    regs.args[4] = 0;  // fd
-    regs.args[5] = 0;  // offset
-    regs.ToPid(state->pid);
-    return;
-  }
-
   // When the exec syscall returns this data won't be accessible any more, so
   // read it now so we can use it in HandleSyscallEnd.
   if (regs.syscall == __NR_execve) {
@@ -633,13 +591,6 @@ void Tracer::HandleSyscallStart(PidState* state) {
         reinterpret_cast<void*>(regs.args[0]));
     state->exec_argv = state->mem.ReadNullTerminatedUtf8Array(
         reinterpret_cast<void*>(regs.args[1]));
-  }
-
-  state->path_is_redirected = false;
-  if (!opts_.redirect_root.isNull() && state->scratch_space) {
-    if (RedirectSyscall(*state, &regs)) {
-      state->path_is_redirected = true;
-    }
   }
 
   // Hash the contents of a file being opened or unlinked before the system
@@ -668,20 +619,6 @@ void Tracer::HandleSyscallEnd(PidState* state) {
   Registers regs;
   regs.FromPid(state->pid);
 
-  if (state->in_hijack) {
-    state->in_hijack = false;
-    if (regs.return_value == -1) {
-      LOG(FATAL) << "mmap failed";
-    }
-    state->scratch_space = *reinterpret_cast<uint64_t*>(&regs.return_value);
-    LOG(INFO) << state->pid << " mmap at 0x"
-              << std::hex << state->scratch_space;
-
-    // Do the original syscall again.
-    state->hijack_registers.ToPid(state->pid);
-    return;
-  }
-
   switch (regs.syscall) {
     case __NR_openat:
     case __NR_open: {
@@ -700,7 +637,6 @@ void Tracer::HandleSyscallEnd(PidState* state) {
               state, regs.args[0], reinterpret_cast<void*>(regs.args[1]));
         }
 
-        file->redirected = state->path_is_redirected;
         file->sha1_before = state->file_contents_sha1;
         file->open_ordering = next_ordering_++;
       }
@@ -720,9 +656,6 @@ void Tracer::HandleSyscallEnd(PidState* state) {
         state->process_pb->clear_argv();
         state->process_pb->mutable_argv()->append(state->exec_argv);
         state->exec_completed = false;
-        state->scratch_space = 0;
-        state->needs_hijack = true;
-        state->in_hijack = false;
       }
       break;
     }
@@ -740,7 +673,6 @@ void Tracer::HandleSyscallEnd(PidState* state) {
         }
 
         file.sha1_before = state->file_contents_sha1;
-        file.redirected = state->path_is_redirected;
         file.unlinked = true;
         file.open_ordering = next_ordering_++;
         file.close_ordering = file.open_ordering;
@@ -754,7 +686,6 @@ void Tracer::HandleSyscallEnd(PidState* state) {
             state->pid, reinterpret_cast<void*>(regs.args[0]));
         file.filename = ReadAbsolutePath(
             state->pid, reinterpret_cast<void*>(regs.args[1]));
-        file.redirected = state->path_is_redirected;
         file.sha1_before = state->file_contents_sha1;
         file.open_ordering = next_ordering_++;
         file.close_ordering = file.open_ordering;
@@ -869,127 +800,4 @@ QByteArray Tracer::Sha1Hash(const QString& absolute_path) {
   }
 
   return h.result();
-}
-
-bool Tracer::RedirectSyscall(const Tracer::PidState& state,
-                             Tracer::Registers* regs) {
-  bool modified_regs = false;
-  switch (regs->syscall) {
-    case __NR_open:
-      modified_regs |= RedirectSyscallArg(
-          state, 0, OpenFlagsMightWrite(regs->args[1]), regs);
-      break;
-    case __NR_rename:
-      modified_regs |= RedirectSyscallArg(state, 0, true, regs);
-      modified_regs |= RedirectSyscallArg(state, 1, true, regs);
-      break;
-    case __NR_stat:
-    case __NR_lstat:
-      modified_regs |= RedirectSyscallArg(state, 0, false, regs);
-      break;
-    case __NR_mkdir:
-    case __NR_rmdir:
-    case __NR_creat:
-    case __NR_chmod:
-    case __NR_chown:
-    case __NR_lchown:
-    case __NR_unlink:
-    case __NR_chdir:
-    case __NR_utime:
-    case __NR_utimes:
-      modified_regs |= RedirectSyscallArg(state, 0, true, regs);
-      break;
-    case __NR_link:
-    case __NR_symlink:
-      modified_regs |= RedirectSyscallArg(state, 1, true, regs);
-      break;
-
-    case __NR_openat:
-      modified_regs |= RedirectSyscallArgAt(
-          state, 1, 0, OpenFlagsMightWrite(regs->args[1]), regs);
-      break;
-    case __NR_mkdirat:
-    case __NR_fchownat:
-    case __NR_fchmodat:
-    case __NR_unlinkat:
-      modified_regs |= RedirectSyscallArgAt(state, 1, 0, true, regs);
-      break;
-    case __NR_renameat:
-      modified_regs |= RedirectSyscallArgAt(state, 1, 0, true, regs);
-      modified_regs |= RedirectSyscallArgAt(state, 3, 2, true, regs);
-      break;
-    case __NR_linkat:
-      modified_regs |= RedirectSyscallArgAt(state, 3, 2, true, regs);
-      break;
-    case __NR_symlinkat:
-      modified_regs |= RedirectSyscallArgAt(state, 2, 1, true, regs);
-      break;
-    case __NR_faccessat:
-    case __NR_newfstatat:
-      modified_regs |= RedirectSyscallArgAt(state, 1, 0, false, regs);
-      break;
-  }
-
-  if (modified_regs) {
-    regs->ToPid(state.pid);
-  }
-  return modified_regs;
-}
-
-bool Tracer::RedirectSyscallArg(const Tracer::PidState& state, int arg_index,
-                                bool might_write, Tracer::Registers* regs,
-                                QString filename) {
-  if (filename.isNull()) {
-    filename = ReadAbsolutePath(
-        state.pid, reinterpret_cast<void*>(regs->args[arg_index]));
-  }
-  while (filename.startsWith(opts_.redirect_root)) {
-    filename = filename.mid(opts_.redirect_root.length());
-  }
-  if (filename.startsWith(opts_.project_root)) {
-    // Never redirect files in the project directory.
-    return false;
-  }
-
-  const QString redirected_filename = opts_.redirect_root + filename;
-
-  if (!might_write && !QFile::exists(redirected_filename)) {
-    // Only redirect read-only opens if the file was already written to.
-    return false;
-  }
-
-  if (QFile::exists(filename) && !QFile::exists(redirected_filename)) {
-    if (QFileInfo(filename).isDir()) {
-      LOG(INFO) << "Creating directory " << redirected_filename;
-      QDir().mkpath(redirected_filename);
-    } else {
-      if (!utils::RecursiveCopy(filename, redirected_filename)) {
-        return false;
-      }
-    }
-  }
-
-  const QString orig_dir = QFileInfo(filename).path();
-  const QString redirected_dir = QFileInfo(redirected_filename).path();
-  if (QFile::exists(orig_dir) && !QFile::exists(redirected_dir)) {
-    LOG(INFO) << "Creating directory " << redirected_dir;
-    QDir().mkpath(redirected_dir);
-  }
-
-  // Write the new filename to the process' memory.
-  state.mem.WriteNullTerminatedUtf8(
-      redirected_filename, reinterpret_cast<void*>(state.scratch_space));
-  regs->args[arg_index] = state.scratch_space;
-
-  LOG(INFO) << "Redirecting syscall " << regs->syscall << " for " << filename;
-  return true;
-}
-
-bool Tracer::RedirectSyscallArgAt(const PidState& state, int arg_index,
-                                  int at_index, bool might_write,
-                                  Registers *regs) {
-  const QString& filename = ReadPathAt(
-      &state, regs->args[at_index],
-      reinterpret_cast<void*>(regs->args[arg_index]));
-  return RedirectSyscallArg(state, arg_index, might_write, regs, filename);
 }

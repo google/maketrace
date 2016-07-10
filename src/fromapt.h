@@ -29,8 +29,7 @@ class FromApt {
                   const QStringList& args) const;
   bool TraceCommand(const QString& output_name,
                     const QStringList& args,
-                    const QString& working_directory,
-                    bool redirect_root = false) const;
+                    const QString& working_directory) const;
 
   bool Autotools();
 

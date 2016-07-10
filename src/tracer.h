@@ -39,10 +39,6 @@ class Tracer {
     // All filenames will be made relative to this directory.  If unset,
     // defaults to the current directory.
     QString project_root;
-
-    // If true, writes to files outside the project root will be made relative
-    // to this directory instead.
-    QString redirect_root;
   };
 
   // Starts the executable and runs it until it terminates.
@@ -101,13 +97,6 @@ class Tracer {
 
   // Fills the metadata proto that will be written at the start of the file.
   void FillMetadata(pb::MetaData* metadata);
-
-  bool RedirectSyscall(const PidState& state, Registers* regs);
-  bool RedirectSyscallArg(const PidState& state, int arg_index,
-                          bool might_write, Registers* regs,
-                          QString filename = QString());
-  bool RedirectSyscallArgAt(const PidState& state, int arg_index, int at_index,
-                            bool might_write, Registers* regs);
 
   Options opts_;
   std::unique_ptr<utils::RecordFile<pb::Record>> trace_file_;

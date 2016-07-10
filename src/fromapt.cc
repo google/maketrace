@@ -101,8 +101,7 @@ bool FromApt::Autotools() {
 
   if (!TraceCommand("install.trace",
                     {"make", "install"},
-                    package_dir_.path(),
-                    true)) {
+                    package_dir_.path())) {
     LOG(ERROR) << "install failed";
     return false;
   }
@@ -127,18 +126,12 @@ bool FromApt::RunCommand(const QString& working_directory,
 
 bool FromApt::TraceCommand(const QString& output_name,
                            const QStringList& args,
-                           const QString& working_directory,
-                           bool redirect_root) const {
+                           const QString& working_directory) const {
   Tracer::Options opts;
   opts.output_filename = output_name;
   opts.args = args;
   opts.working_directory = working_directory;
   opts.project_name = package_;
-
-  QTemporaryDir redirect_root_dir;
-  if (redirect_root) {
-    opts.redirect_root = redirect_root_dir.path();
-  }
 
   return Tracer::Run(opts);
 }

@@ -63,10 +63,6 @@ message File {
 
   optional int32 open_ordering = 6;
   optional int32 close_ordering = 7;
-
-  // The filename was outside the project root and the tracer was configured to
-  // redirect file accesses to another directory.
-  optional bool redirected = 8;
 }
 
 message Process {

@@ -454,6 +454,10 @@ bool Make::Run(const Options& opts) {
 
   make.BuildGraph();
   Graph<TraceNode> intermediate_graph = make.graph();
+  if (!opts.intermediate_graph_output_filename.isEmpty()) {
+    intermediate_graph.WriteDotToFile(opts.intermediate_graph_output_filename);
+  }
+
   make.FindCompileTargets();
   make.FindLinkTargets();
 
@@ -472,9 +476,6 @@ bool Make::Run(const Options& opts) {
 
   if (!opts.graph_output_filename.isEmpty()) {
     make.graph().WriteDotToFile(opts.graph_output_filename);
-  }
-  if (!opts.intermediate_graph_output_filename.isEmpty()) {
-    intermediate_graph.WriteDotToFile(opts.intermediate_graph_output_filename);
   }
   return true;
 }

@@ -155,7 +155,9 @@ bool GccBuildTargetGen::Gen(const TraceNode& node, pb::BuildTarget* target) {
   }
 
   CHECK((is_compile && node.type_ == TraceNode::Type::CompileStep) ||
-        (!is_compile && node.type_ == TraceNode::Type::DynamicLinkStep));
+        (!is_compile && node.type_ == TraceNode::Type::DynamicLinkStep))
+      << "is_compile: " << is_compile << ", node: " << node.ID()
+      << " (" << static_cast<int>(node.type_) << ")";
 
   // Add the flags and header/library search paths.
   if (is_compile) {

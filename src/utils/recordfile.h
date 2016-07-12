@@ -24,7 +24,32 @@
 namespace utils {
 
 template <typename T>
-class RecordFile {
+class RecordWriter {
+ public:
+  virtual ~RecordWriter() {}
+
+  virtual void WriteRecord(const T& message) = 0;
+
+  template <typename Container>
+  void WriteAll(const Container& list);
+};
+
+
+template <typename T>
+class RecordReader {
+ public:
+  virtual ~RecordReader() {}
+
+  virtual bool AtEnd() const = 0;
+  virtual bool ReadRecord(T* message) = 0;
+
+  template <typename Container>
+  bool ReadAll(Container* list);
+};
+
+
+template <typename T>
+class RecordFile : public RecordReader<T>, public RecordWriter<T> {
  public:
   explicit RecordFile(QIODevice* device);
   explicit RecordFile(const QString& filename);
@@ -34,15 +59,11 @@ class RecordFile {
   bool Open(QFile::OpenMode mode);
 
   // Reading.
-  template <typename Container>
-  bool ReadAll(Container* list);
-  bool AtEnd() const;
-  bool ReadRecord(T* message);
+  bool AtEnd() const override;
+  bool ReadRecord(T* message) override;
 
   // Writing.
-  template <typename Container>
-  void WriteAll(const Container& list);
-  void WriteRecord(const T& message);
+  void WriteRecord(const T& message) override;
 
   // Convenience functions.
   static QList<T> ReadAllFrom(const QString& filename);
@@ -51,6 +72,18 @@ class RecordFile {
  private:
   QFile file_;
   QDataStream stream_;
+};
+
+
+template <typename T>
+class MemoryRecordWriter : public RecordWriter<T> {
+ public:
+  explicit MemoryRecordWriter(QList<T>* records) : records_(records) {}
+
+  void WriteRecord(const T& record) override { records_->append(record); }
+
+ private:
+  QList<T>* records_;
 };
 
 
@@ -88,7 +121,7 @@ bool RecordFile<T>::Open(QIODevice::OpenMode mode) {
 
 template <typename T>
 template <typename Container>
-bool RecordFile<T>::ReadAll(Container* list) {
+bool RecordReader<T>::ReadAll(Container* list) {
   list->clear();
   while (!AtEnd()) {
     T record;
@@ -115,7 +148,7 @@ bool RecordFile<T>::ReadRecord(T* message) {
 
 template <typename T>
 template <typename Container>
-void RecordFile<T>::WriteAll(const Container& list) {
+void RecordWriter<T>::WriteAll(const Container& list) {
   for (const T& record : list) {
     WriteRecord(record);
   }

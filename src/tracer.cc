@@ -143,81 +143,69 @@ struct Tracer::PidState {
 };
 
 
-bool Tracer::Run(const Options& opts) {
-  CHECK(!opts.args.empty());
+Tracer::Tracer(const QString& root_directory,
+               std::unique_ptr<utils::RecordWriter<pb::Record>> writer)
+    : root_directory_(root_directory),
+      trace_writer_(std::move(writer)) {}
 
-  LOG(INFO) << "Tracing " << opts.args << " in "
-            << opts.working_directory;
+Tracer::Tracee Tracer::Subprocess(const QStringList& args,
+                                  const QString& working_directory) {
+  return [args, working_directory]() {
+    // Don't worry about cleaning up any of this since the process will exit
+    // before the function returns.
+    char** c_args = new char*[args.size() + 1];
+    for (int i = 0; i < args.size(); ++i) {
+      c_args[i] = strdup(args[i].toUtf8().constData());
+    }
+    c_args[args.size()] = nullptr;
 
+    if (!working_directory.isEmpty() &&
+        chdir(working_directory.toUtf8().constData()) != 0) {
+      LOG(FATAL) << "Child process failed to change working directory to "
+                 << working_directory;
+    }
+
+    // Start the child process.
+    execvp(args[0].toUtf8().constData(), c_args);
+    LOG(ERROR) << "Exec failed: " << strerror(errno);
+  };
+}
+
+bool Tracer::Start(Tracee tracee) {
   pid_t pid = fork();
   switch (pid) {
     case -1:
       LOG(ERROR) << "fork failed: " << strerror(errno);
       return false;
-    case 0:
-      if (!opts.working_directory.isEmpty() &&
-          chdir(opts.working_directory.toUtf8().constData()) != 0) {
-        LOG(FATAL) << "Child process failed to change working directory to "
-                   << opts.working_directory;
-      }
-      ExecSubprocess(opts.args);
-      return false;  // Never reached.
-    default: {
-      Tracer t(opts);
-      t.pids_[pid] =
-          new PidState(0, pid, &t.next_id_, &t.next_ordering_);
 
-      if (t.WaitForChild().state != ChildEvent::kStoppedWithSignal) {
+    case 0: {
+      // Start tracing.
+      int ret = ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+      if (ret != 0) {
+        LOG(ERROR) << "PTRACE_TRACEME failed: " << strerror(errno);
+      } else {
+        kill(getpid(), SIGSTOP);
+        tracee();
+      }
+
+      google::FlushLogFilesUnsafe(google::GLOG_INFO);
+      _exit(1);
+      return false;  // Never reached.
+    }
+
+    default: {
+      pids_[pid] =
+          new PidState(0, pid, &next_id_, &next_ordering_);
+
+      if (WaitForChild().state != ChildEvent::kStoppedWithSignal) {
         return false;
       }
-      if (!t.SetOptions(pid)) {
-        return nullptr;
+      if (!SetOptions(pid)) {
+        return false;
       }
-      return t.TraceUntilExit();
     }
   }
-}
-
-Tracer::Tracer(const Options& opts)
-    : opts_(opts) {
-  // Default to the current directory.
-  if (opts_.project_root.isEmpty()) {
-    opts_.project_root = opts.working_directory;
-  }
-
-  // Guess a project name if we haven't been given one.
-  if (opts_.project_name.isEmpty()) {
-    opts_.project_name = QFileInfo(opts_.project_root).fileName();
-    const int dash = opts_.project_name.indexOf('-');
-    if (dash != -1) {
-      opts_.project_name = opts_.project_name.left(dash);
-    }
-  }
-}
-
-void Tracer::ExecSubprocess(const QStringList& argv) {
-  // Don't worry about cleaning up any of this since the process will exit
-  // before the function returns.
-  char** c_args = new char*[argv.size() + 1];
-  for (int i = 0; i < argv.size(); ++i) {
-    c_args[i] = strdup(argv[i].toUtf8().constData());
-  }
-  c_args[argv.size()] = nullptr;
-
-  // Start tracing.
-  int ret = ptrace(PTRACE_TRACEME, 0, NULL, NULL);
-  if (ret != 0) {
-    LOG(ERROR) << "PTRACE_TRACEME failed: " << strerror(errno);
-  } else {
-    kill(getpid(), SIGSTOP);
-
-    // Start the child process.
-    execvp(argv[0].toUtf8().constData(), c_args);
-    LOG(ERROR) << "Exec failed: " << strerror(errno);
-  }
-
-  google::FlushLogFilesUnsafe(google::GLOG_INFO);
-  _exit(1);
+  return true;
 }
 
 Tracer::ChildEvent Tracer::WaitForChild() {
@@ -283,30 +271,7 @@ bool Tracer::SetOptions(pid_t pid) {
   return true;
 }
 
-void Tracer::FillMetadata(pb::MetaData* metadata) {
-  metadata->set_project_root(opts_.project_root);
-  metadata->set_project_name(opts_.project_name);
-
-  if (opts_.project_root != QDir::currentPath()) {
-    metadata->set_build_dir(
-        utils::path::MakeRelativeTo(QDir::currentPath(),
-                                    opts_.project_root));
-  }
-}
-
 bool Tracer::TraceUntilExit() {
-  trace_file_ = make_unique<utils::RecordFile<pb::Record>>(
-      opts_.output_filename);
-  if (!trace_file_->Open(QFile::WriteOnly)) {
-    LOG(ERROR) << "Failed to open " << trace_file_->filename()
-               << " for writing";
-    return false;
-  }
-
-  pb::Record metadata_record;
-  FillMetadata(metadata_record.mutable_metadata());
-  trace_file_->WriteRecord(metadata_record);
-
   // Start the process.
   if (pids_.empty()) {
     return false;
@@ -428,7 +393,7 @@ void Tracer::HandleProcessExited(PidState* state, int exit_code) {
 
   state->process_pb->set_exit_code(exit_code);
   state->process_pb->set_end_ordering(next_ordering_++);
-  trace_file_->WriteRecord(state->record_pb);
+  trace_writer_->WriteRecord(state->record_pb);
   pids_.remove(state->pid);
   delete state;
 }
@@ -508,11 +473,11 @@ void Tracer::WriteFileProtos(PidState* state) {
     // Dereference any symlinks and make paths relative to the project root.
     const QString absolute_path = utils::path::Readlink(fpb->filename());
     fpb->set_filename(utils::path::MakeRelativeTo(
-        absolute_path, opts_.project_root));
+        absolute_path, root_directory_));
     if (fpb->has_renamed_from()) {
       fpb->set_renamed_from(utils::path::MakeRelativeTo(
           utils::path::Readlink(fpb->renamed_from()),
-          opts_.project_root));
+          root_directory_));
     }
 
     // Hash the file's contents.

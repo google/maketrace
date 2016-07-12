@@ -28,6 +28,7 @@
 #include <QTextStream>
 
 #include "fromapt.h"
+#include "tracecontroller.h"
 #include "tracer.h"
 #include "analysis/configure.h"
 #include "analysis/install.h"
@@ -46,7 +47,7 @@ DEFINE_string(project_root, "", "The directory containing the source code, if "
 namespace {
 
 bool Trace(const QStringList& args) {
-  Tracer::Options opts;
+  trace_controller::Options opts;
   opts.output_filename = args[0] + ".trace";
   opts.args = args.mid(1);
   opts.working_directory = QDir::currentPath();
@@ -58,7 +59,7 @@ bool Trace(const QStringList& args) {
     opts.project_root = utils::str::StlToQt(FLAGS_project_root);
   }
 
-  return Tracer::Run(opts);
+  return trace_controller::Run(opts);
 }
 
 

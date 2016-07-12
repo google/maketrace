@@ -15,6 +15,7 @@
 #ifndef TRACER_H
 #define TRACER_H
 
+#include <functional>
 #include <memory>
 
 #include "common.h"
@@ -23,39 +24,22 @@
 
 class Tracer {
  public:
-  struct Options {
-    // Run this command in this directory.
-    QStringList args;
-    QString working_directory;
+  typedef std::function<void()> Tracee;
 
-    // Write trace records to this file.
-    QString output_filename;
+  Tracer(const QString& root_directory,
+         std::unique_ptr<utils::RecordWriter<pb::Record>> writer);
 
-    // The name of the project to put in the metadata.  If unset, defaults to
-    // the name of the project root directory, with numbers and punctuation
-    // removed.
-    QString project_name;
+  static Tracee Subprocess(const QStringList& args,
+                           const QString& working_directory);
 
-    // All filenames will be made relative to this directory.  If unset,
-    // defaults to the current directory.
-    QString project_root;
-  };
-
-  // Starts the executable and runs it until it terminates.
-  static bool Run(const Options& opts);
+  bool Start(Tracee tracee);
+  bool TraceUntilExit();
 
  private:
   struct ChildEvent;
   struct FileState;
   struct PidState;
   struct Registers;
-
-  Tracer(const Options& opts);
-
-  bool TraceUntilExit();
-
-  // Wrapper for exec().
-  static void ExecSubprocess(const QStringList& argv);
 
   // Uses waitpid() to wait for any child process to change state.
   ChildEvent WaitForChild();
@@ -95,11 +79,8 @@ class Tracer {
   // state to the pb::Process.
   void WriteFileProtos(PidState* state);
 
-  // Fills the metadata proto that will be written at the start of the file.
-  void FillMetadata(pb::MetaData* metadata);
-
-  Options opts_;
-  std::unique_ptr<utils::RecordFile<pb::Record>> trace_file_;
+  const QString root_directory_;
+  std::unique_ptr<utils::RecordWriter<pb::Record>> trace_writer_;
   QMap<pid_t, PidState*> pids_;
   QSet<pid_t> stopped_children_;
 

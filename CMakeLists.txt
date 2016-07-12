@@ -1,5 +1,6 @@
 project(maketrace)
 cmake_minimum_required(VERSION 2.8)
+enable_testing()
 
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
 find_package(gflags REQUIRED)
@@ -22,7 +23,9 @@ include_directories(${PROTOBUF_INCLUDE_DIRS})
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall -pedantic")
 
 add_subdirectory(protoc-qt)
+add_subdirectory(test)
 set(PROTOBUF_PROTOC_EXECUTABLE protoc-qt)
+set(Protobuf_PROTOC_EXECUTABLE protoc-qt)  # for cmake 3
 
 include_directories(${CMAKE_SOURCE_DIR}/src)
 include_directories(${CMAKE_BINARY_DIR}/src)
@@ -41,10 +44,10 @@ set(HEADERS
 set(SOURCES
   src/fromapt.cc
   src/installedfilesreader.cc
-  src/main.cc
   src/memory.cc
   src/reference.cc
   src/toolsearchpath.cc
+  src/tracecontroller.cc
   src/tracer.cc
   src/tracereader.cc
 
@@ -76,21 +79,38 @@ set(PROTOS
 
 protobuf_generate_cpp(PROTO_SOURCES PROTO_HDRS ${PROTOS})
 
-add_executable(tracer
+add_library(tracerlib OBJECT
   ${HEADERS}
   ${SOURCES}
   ${PROTO_HEADERS}
   ${PROTO_SOURCES}
   ${TRACER_SOURCES}
 )
+
+target_include_directories(tracerlib PUBLIC
+  $<TARGET_PROPERTY:Qt5::Core,INTERFACE_INCLUDE_DIRECTORIES>
+  $<TARGET_PROPERTY:Qt5::Concurrent,INTERFACE_INCLUDE_DIRECTORIES>
+)
+target_compile_definitions(tracerlib PUBLIC
+  $<TARGET_PROPERTY:Qt5::Core,INTERFACE_COMPILE_DEFINITIONS>
+  $<TARGET_PROPERTY:Qt5::Concurrent,INTERFACE_COMPILE_DEFINITIONS>
+)
+set_target_properties(tracerlib PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+)
+
+add_executable(tracer
+  $<TARGET_OBJECTS:tracerlib>
+  src/main.cc
+)
 target_link_libraries(tracer
   Qt5::Core
   Qt5::Concurrent
   ${CMAKE_THREAD_LIBS_INIT}
+  ${GLOG_LIBRARY}
   ${GFLAGS_LIBRARY}
   ${UNWIND_LIBRARY}
   ${LZMA_LIBRARY}
-  ${GLOG_LIBRARY}
   ${PROTOBUF_LIBRARY}
   protobuf_qt
 )

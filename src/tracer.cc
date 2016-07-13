@@ -569,6 +569,7 @@ void Tracer::HandleSyscallStart(PidState* state) {
       // Hash the file that's being overwritten since this is the "before" sha1.
       filename_arg_index = 1; break;
     case __NR_unlinkat:
+    case __NR_openat:
       // We CHECK fd == AT_FDCWD in HandleSyscallEnd;
       filename_arg_index = 1; break;
   }
@@ -577,6 +578,8 @@ void Tracer::HandleSyscallStart(PidState* state) {
     const QString filename = ReadAbsolutePath(
         state->pid, reinterpret_cast<void*>(regs.args[filename_arg_index]));
     state->file_contents_sha1 = Sha1Hash(filename);
+  } else {
+    state->file_contents_sha1.clear();
   }
 }
 

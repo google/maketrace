@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <syscall.h>
 
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -35,6 +37,12 @@ class TracerTest : public ::testing::Test {
     for (const pb::Record& record : records_) {
       processes_.append(record.process());
     }
+  }
+
+  void WriteFile(QFile* file, const QString& contents) {
+    file->open(QFile::WriteOnly);
+    file->write(contents.toUtf8());
+    file->close();
   }
 
   std::unique_ptr<Tracer> tracer_;
@@ -60,8 +68,7 @@ TEST_F(TracerTest, OpensNoFiles) {
 
 TEST_F(TracerTest, OpensOneFileForReading) {
   QTemporaryFile f;
-  f.open();
-  f.close();
+  WriteFile(&f, QString());
 
   Run([&f]() {
     QFile f2(f.fileName());
@@ -76,9 +83,7 @@ TEST_F(TracerTest, OpensOneFileForReading) {
 
 TEST_F(TracerTest, OpensOneFileForWritingButNotWritten) {
   QTemporaryFile f;
-  f.open();
-  f.write("foo");
-  f.close();
+  WriteFile(&f, "foo");
 
   Run([&f]() {
     QFile f2(f.fileName());
@@ -93,9 +98,7 @@ TEST_F(TracerTest, OpensOneFileForWritingButNotWritten) {
 
 TEST_F(TracerTest, OpensOneFileForWritingAndWritten) {
   QTemporaryFile f;
-  f.open();
-  f.write("foo");
-  f.close();
+  WriteFile(&f, "foo");
 
   Run([&f]() {
     QFile f2(f.fileName());
@@ -111,9 +114,7 @@ TEST_F(TracerTest, OpensOneFileForWritingAndWritten) {
 
 TEST_F(TracerTest, OpensOneFileForWritingAndWrittenButUnchanged) {
   QTemporaryFile f;
-  f.open();
-  f.write("hello");
-  f.close();
+  WriteFile(&f, "hello");
 
   Run([&f]() {
     QFile f2(f.fileName());
@@ -143,8 +144,7 @@ TEST_F(TracerTest, CreatesOneFile) {
 
 TEST_F(TracerTest, DeletesOneFile) {
   QTemporaryFile f;
-  f.open();
-  f.close();
+  WriteFile(&f, QString());
 
   Run([&f]() {
     QFile::remove(f.fileName());
@@ -158,8 +158,7 @@ TEST_F(TracerTest, DeletesOneFile) {
 
 TEST_F(TracerTest, RenamesOneFile) {
   QTemporaryFile f;
-  f.open();
-  f.close();
+  WriteFile(&f, QString());
 
   Run([&f]() {
     QFile::rename(f.fileName(), f.fileName() + "2");
@@ -171,4 +170,43 @@ TEST_F(TracerTest, RenamesOneFile) {
   EXPECT_EQ(f.fileName() + "2", processes_[0].files(0).filename());
   EXPECT_EQ(f.fileName(), processes_[0].files(0).renamed_from());
   EXPECT_EQ(pb::File_Access_READ, processes_[0].files(0).access());
+}
+
+TEST_F(TracerTest, OpenAtDirectory) {
+  QTemporaryDir dir;
+  QFile file(dir.path() + "/foo");
+  WriteFile(&file, "foo");
+
+  Run([&dir, &file]() {
+    QFile f2(file.fileName());
+    f2.open(QFile::ReadOnly);
+    f2.close();
+
+    const int fd = openat(AT_FDCWD, dir.path().toUtf8().constData(),
+                          O_RDONLY|O_NONBLOCK|O_DIRECTORY|O_CLOEXEC);
+    char buf[1024];
+    while (syscall(SYS_getdents, fd, buf, sizeof(buf))) {}
+    close(fd);
+  });
+
+  ASSERT_EQ(1, processes_.count());
+  ASSERT_EQ(2, processes_[0].files_size());
+
+  pb::File f, d;
+  if (processes_[0].files(0).filename() == file.fileName()) {
+    f = processes_[0].files(0);
+    d = processes_[0].files(1);
+  } else {
+    f = processes_[0].files(1);
+    d = processes_[0].files(0);
+  }
+
+  EXPECT_EQ(pb::File_Access_READ, f.access());
+  EXPECT_TRUE(f.has_sha1_before());
+  EXPECT_TRUE(f.has_sha1_after());
+
+  EXPECT_EQ(dir.path(), d.filename());
+  EXPECT_EQ(pb::File_Access_READ, d.access());
+  EXPECT_FALSE(d.has_sha1_before());
+  EXPECT_FALSE(d.has_sha1_after());
 }

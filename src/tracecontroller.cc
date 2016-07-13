@@ -28,6 +28,9 @@ bool Run(Options opts) {
   if (opts.project_root.isEmpty()) {
     opts.project_root = opts.working_directory;
   }
+  if (opts.project_name.isEmpty()) {
+    opts.project_name = QFileInfo(opts.project_root).fileName();
+  }
 
   // Open the file.
   auto file = make_unique<utils::RecordFile<pb::Record>>(

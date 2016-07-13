@@ -18,6 +18,7 @@
 #include "analysis/configure.h"
 #include "analysis/install.h"
 #include "analysis/make.h"
+#include "gen/bazel/generator.h"
 #include "utils/logging.h"
 
 #include <QCoreApplication>
@@ -29,11 +30,15 @@
 FromApt::FromApt(const QString& package)
     : package_(package) {
   dir_.setAutoRemove(false);
+  docker_dir_ = dir_.path() + "/docker";
   source_dir_ = dir_.path() + "/source";
   output_dir_ = dir_.path() + "/output";
+  bazel_workspace_ = dir_.path() + "/workspace";
 
+  QDir().mkdir(docker_dir_);
   QDir().mkdir(source_dir_);
   QDir().mkdir(output_dir_);
+  QDir().mkdir(bazel_workspace_);
 }
 
 FromApt::Buildsystem FromApt::GuessBuildsystem() const {
@@ -51,7 +56,7 @@ bool FromApt::Run() {
   LOG(INFO) << "Using temporary directory " << dir_.path();
 
   // Write a dockerfile.
-  QFile dockerfile(dir_.path() + "/Dockerfile");
+  QFile dockerfile(docker_dir_ + "/Dockerfile");
   dockerfile.open(QFile::WriteOnly);
   QTextStream ts(&dockerfile);
   ts << QString(
@@ -68,11 +73,11 @@ bool FromApt::Run() {
 
   // Copy the tracer binary.
   QFile::copy(QCoreApplication::applicationFilePath(),
-              dir_.path() + "/tracer");
+              docker_dir_ + "/tracer");
 
   // Build the docker container.
   QByteArray output;
-  if (!RunCommand(dir_.path(), {"docker", "build", "."}, &output)) {
+  if (!RunCommand(docker_dir_, {"docker", "build", "."}, &output)) {
     LOG(ERROR) << "docker build failed";
     return false;
   }
@@ -88,7 +93,7 @@ bool FromApt::Run() {
   image_ = match.captured(1);
 
   // Copy the source.
-  if (!RunCommand(dir_.path(), {
+  if (!RunCommand(docker_dir_, {
                   "docker", "run",
                   "-v", source_dir_ + ":/mounted-source",
                   image_,
@@ -152,6 +157,15 @@ bool FromApt::Run() {
     return false;
   }
 
+  gen::bazel::Generator::Options bazel_opts;
+  bazel_opts.target_filename = make_opts.output_filename;
+  bazel_opts.installed_files_filename = install_opts.output_filename;
+  bazel_opts.workspace_path = bazel_workspace_;
+  bazel_opts.project_root = source_dir_;
+  if (!gen::bazel::Generator::Run(bazel_opts)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -189,11 +203,14 @@ bool FromApt::RunTracer(const QStringList& args, QByteArray* output) const {
   if (args[0] == "trace") {
     all_args.append("--privileged");
   }
-  all_args.append(image_);
-  all_args.append("/usr/bin/tracer");
-  all_args.append("--");
+  all_args.append({
+      image_,
+      "/usr/bin/tracer",
+      "--project_name", package_,
+      "--",
+  });
   all_args.append(args);
-  return RunCommand(dir_.path(), all_args, output);
+  return RunCommand(docker_dir_, all_args, output);
 }
 
 void FromApt::WriteEmptyShellScript(const QString& filename) const {

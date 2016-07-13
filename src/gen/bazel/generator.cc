@@ -168,6 +168,9 @@ void Generator::Generate(
 
     if (record.has_metadata()) {
       metadata_ = record.metadata();
+      if (!opts_.project_root.isEmpty()) {
+        metadata_.set_project_root(opts_.project_root);
+      }
     } else if (record.has_build_target()) {
       targets_[record.build_target().qualified_name()] = record.build_target();
     }

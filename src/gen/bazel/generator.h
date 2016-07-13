@@ -37,6 +37,9 @@ class Generator {
 
     // Write BUILD files to this directory.
     QString workspace_path;
+
+    // If this is set, the project_root metadata field will be changed to this.
+    QString project_root;
   };
 
   static bool Run(const Options& opts);

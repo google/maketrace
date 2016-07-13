@@ -43,8 +43,10 @@ class FromApt {
   const QString package_;
 
   QTemporaryDir dir_;
+  QString docker_dir_;
   QString source_dir_;
   QString output_dir_;
+  QString bazel_workspace_;
   QString image_;
 };
 

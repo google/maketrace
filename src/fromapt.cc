@@ -127,6 +127,22 @@ bool FromApt::Run() {
     break;
   }
 
+  case Buildsystem::CMake: {
+    if (!RunTracer({"trace", "/output/configure", "cmake", "."})) {
+      LOG(ERROR) << "cmake failed";
+      return false;
+    }
+    if (!RunTracer({"trace", "/output/make", "make"})) {
+      LOG(ERROR) << "make failed";
+      return false;
+    }
+    if (!RunTracer({"trace", "/output/install", "make", "install"})) {
+      LOG(ERROR) << "install failed";
+      return false;
+    }
+    break;
+  }
+
   default:
     LOG(ERROR) << "unsupported buildsystem: " << int(buildsystem);
     return false;

@@ -55,14 +55,19 @@ Generator::Generator(const Options& opts)
     : opts_(opts) {
 }
 
-void Generator::AddTargetRecursive(const pb::BuildTarget& target, Rule* rule) {
+void Generator::AddTargetRecursive(const pb::BuildTarget& target, Rule* rule,
+                                   Rule* binary_rule) {
+  if (binary_rule == nullptr) {
+    binary_rule = rule;
+  }
+
   for (const pb::Reference& ref : target.srcs()) {
     switch (ref.type()) {
       case pb::Reference_Type_LIBRARY:
         if (ref.name() == "pthread") {
-          rule->add_copt("-pthread");
+          binary_rule->add_linkopt("-pthread");
         } else {
-          rule->add_copt("-l" + ref.name());
+          binary_rule->add_linkopt("-l" + ref.name());
         }
         break;
 
@@ -72,7 +77,7 @@ void Generator::AddTargetRecursive(const pb::BuildTarget& target, Rule* rule) {
           const Label dep_label = Label::FromAbsolute(dep.qualified_name());
           if (dep.has_c_compile()) {
             // Add .c and .h files directly.
-            AddTargetRecursive(dep, rule);
+            AddTargetRecursive(dep, rule, binary_rule);
           } else {
             // Otherwise add a dependency on the target.
             rule->add_src(ConvertLabel(dep_label));
@@ -100,24 +105,36 @@ void Generator::AddTargetRecursive(const pb::BuildTarget& target, Rule* rule) {
   }
 
   for (const pb::Reference& ref : target.c_compile().headers()) {
+    QString filename;
     switch (ref.type()) {
       case pb::Reference_Type_ABSOLUTE:
         break;
 
       case pb::Reference_Type_RELATIVE_TO_PROJECT_ROOT:
-        rule->add_src(ref.name());
+        filename = ref.name();
         source_files_.insert(ref);
         break;
 
       case pb::Reference_Type_RELATIVE_TO_BUILD_DIR:
-        rule->add_src(kGeneratedFilePrefix + ref.name());
-        source_files_.insert(ref);
+        filename = kGeneratedFilePrefix + ref.name();
         break;
 
       default:
         LOG(FATAL) << "Bad type for header reference: "
                    << ref.ShortDebugString();
         break;
+    }
+    if (!filename.isEmpty()) {
+      if (filename.endsWith(".h") ||
+          filename.endsWith(".hh") ||
+          filename.endsWith(".hpp") ||
+          filename.endsWith(".hxx") ||
+          filename.endsWith(".inc")) {
+        rule->add_src(filename);
+      } else {
+        rule->add_textual_hdr(filename);
+      }
+      source_files_.insert(ref);
     }
   }
 
@@ -153,6 +170,7 @@ void Generator::AddTargetRecursive(const pb::BuildTarget& target, Rule* rule) {
 
   for (const QString& flag : target.c_compile().flag()) {
     rule->add_copt(flag);
+    binary_rule->add_linkopt(flag);
   }
 }
 
@@ -191,19 +209,32 @@ void Generator::Generate(
         Label::FromAbsolute(target.qualified_name()));
 
     Rule rule(label);
-    if (target.c_link().is_library()) {
-      rule.set_type("cc_library");
+    rule.set_type("cc_library");
+    std::unique_ptr<Rule> binary_rule;
+
+    if (!target.c_link().is_library()) {
+      // cc_binary rules can't have textual_hdrs, so we need to generate 2
+      // rules for binary targets.
+      rule.set_label(Label(label.package(), label.target() + "_binary_lib"));
+
+      binary_rule.reset(new Rule(label));
+      binary_rule->set_type("cc_binary");
+      binary_rule->add_dep(rule.label());
+      if (target.install()) {
+        binary_rule->add_visibility(Label("visibility", "public"));
+      }
     } else {
-      rule.set_type("cc_binary");
+      if (target.install()) {
+        rule.add_visibility(Label("visibility", "public"));
+      }
     }
 
-    if (target.install()) {
-      rule.add_visibility(Label("visibility", "public"));
-    }
-
-    AddTargetRecursive(target, &rule);
+    AddTargetRecursive(target, &rule, binary_rule.get());
 
     rules.append(rule.ToProto());
+    if (binary_rule) {
+      rules.append(binary_rule->ToProto());
+    }
   }
 
   // Copy all the source files into the workspace.

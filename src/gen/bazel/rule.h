@@ -28,11 +28,21 @@ class Rule {
  public:
   explicit Rule(const Label& label, const QString& type = QString());
 
+  Label label() const { return label_; }
+
+  void set_label(const Label& label) { label_ = label; }
   void set_type(const QString& type) { type_ = type; }
   void add_visibility(const Label& l) { visibility_.append(l); }
   void add_src(const QString& filename) { srcs_.insert(filename); }
   void add_src(const Label& l) { srcs_.insert(label_.RelativeTarget(l)); }
+  void add_dep(const QString& filename) { deps_.insert(filename); }
+  void add_dep(const Label& l) { deps_.insert(label_.RelativeTarget(l)); }
+  void add_textual_hdr(const Label& l) {
+    textual_hdrs_.insert(label_.RelativeTarget(l)); }
+  void add_textual_hdr(const QString& filename) {
+    textual_hdrs_.insert(filename); }
   void add_copt(const QString& copt) { copts_.insert(copt); }
+  void add_linkopt(const QString& linkopt) { linkopts_.insert(linkopt); }
 
   bool has_srcs() const { return !srcs_.isEmpty(); }
 
@@ -43,11 +53,14 @@ class Rule {
                            const QSet<QString>& items,
                            blaze_query::Rule* rule);
 
-  const Label label_;
+  Label label_;
   QString type_;
   QList<Label> visibility_;
-  QSet<QString> srcs_;
   QSet<QString> copts_;
+  QSet<QString> linkopts_;
+  QSet<QString> deps_;
+  QSet<QString> srcs_;
+  QSet<QString> textual_hdrs_;
 };
 
 }  // namespace bazel

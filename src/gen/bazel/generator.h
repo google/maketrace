@@ -52,7 +52,8 @@ class Generator {
       std::unique_ptr<utils::RecordFile<pb::Record>> installed_file_records);
 
   Label ConvertLabel(const Label& label);
-  void AddTargetRecursive(const pb::BuildTarget& target, Rule* rule);
+  void AddTargetRecursive(const pb::BuildTarget& target, Rule* rule,
+                          Rule* binary_rule);
 
   static QString RemoveInstalledFilePrefix(const pb::InstalledFile& file);
   QString AbsoluteSourceFilePath(const pb::Reference& ref) const;

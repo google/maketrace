@@ -45,7 +45,10 @@ blaze_query::Rule Rule::ToProto() const {
   pb.set_name(label_.absolute());
 
   SetAttribute("srcs", srcs_, &pb);
+  SetAttribute("deps", deps_, &pb);
   SetAttribute("copts", copts_, &pb);
+  SetAttribute("linkopts", linkopts_, &pb);
+  SetAttribute("textual_hdrs", textual_hdrs_, &pb);
 
   if (!visibility_.isEmpty()) {
     QStringList names;

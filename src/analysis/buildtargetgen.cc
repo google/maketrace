@@ -37,10 +37,17 @@ int BuildTargetGen::AddInputs(const TraceNode& node,
       LOG(WARNING) << "Unknown input node to process " << input.ID();
       continue;
     }
-    make_->CreateReference(input.Filename(), target->add_srcs());
     ++ret;
-    if (limit > 0 && ret == limit) {
-      break;
+    if (limit > 0 && ret > limit) {
+      if (target->has_c_compile()) {
+        // If a compile step has more than one source input, the additional
+        // ones should be listed as headers so they're included as dependencies
+        // of the build target.
+        make_->CreateReference(input.Filename(),
+                               target->mutable_c_compile()->add_headers());
+      }
+    } else {
+      make_->CreateReference(input.Filename(), target->add_srcs());
     }
   }
   return ret;

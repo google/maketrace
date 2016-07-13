@@ -528,7 +528,7 @@ void Make::CreateReference(const QString& name, pb::Reference* ref) const {
 }
 
 void Make::CreateReference(const pb::BuildTarget& target,
-                                pb::Reference* ref) const {
+                           pb::Reference* ref) const {
   ref->set_type(pb::Reference_Type_BUILD_TARGET);
   ref->set_name(target.qualified_name());
 }

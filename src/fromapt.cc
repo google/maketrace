@@ -145,6 +145,9 @@ bool FromApt::Run() {
   make_opts.trace_filename = output_dir_ + "/make.trace";
   make_opts.install_filename = install_opts.output_filename;
   make_opts.output_filename = output_dir_ + "/make.targets";
+  make_opts.graph_output_filename = output_dir_ + "/make.dot";
+  make_opts.intermediate_graph_output_filename =
+      output_dir_ + "/make.intermediate.dot";
   if (!analysis::Make::Run(make_opts)) {
     return false;
   }
@@ -194,10 +197,13 @@ bool FromApt::RunTracer(const QStringList& args, QByteArray* output) const {
 }
 
 void FromApt::WriteEmptyShellScript(const QString& filename) const {
-  QFile f(source_dir_ + "/" + filename);
-  LOG(INFO) << "Writing empty shell script: " << f.fileName();
-  f.open(QFile::WriteOnly);
-  f.write("#!/bin/bash\n");
-  f.close();
-  f.setPermissions(QFile::Permissions(0x0755));
+  if (!RunCommand(dir_.path(), {
+      "docker", "run",
+      "-v", source_dir_ + ":/source",
+      image_,
+      "bash", "-c",
+      "echo '#!/bin/bash' > /source/" + filename,
+  })) {
+    LOG(ERROR) << "Failed to write empty shell script to " << filename;
+  }
 }

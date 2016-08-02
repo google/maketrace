@@ -77,7 +77,8 @@ bool FromApt::Run() {
 
   // Build the docker container.
   QByteArray output;
-  if (!RunCommand(docker_dir_, {"docker", "build", "."}, &output)) {
+  if (!RunCommand(docker_dir_, {"docker", "build", "."}) ||
+      !RunCommand(docker_dir_, {"docker", "build", "."}, &output)) {
     LOG(ERROR) << "docker build failed";
     return false;
   }

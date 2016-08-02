@@ -18,8 +18,7 @@ macro(test test_name)
     $<TARGET_OBJECTS:tracerlib>
     $<TARGET_OBJECTS:test_common>)
   target_link_libraries(${test_name}
-    Qt5::Core
-    Qt5::Concurrent
+    Qt5
     ${CMAKE_THREAD_LIBS_INIT}
     ${GLOG_LIBRARY}
     ${GFLAGS_LIBRARY}

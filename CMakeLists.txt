@@ -2,13 +2,11 @@ project(maketrace)
 cmake_minimum_required(VERSION 2.8)
 enable_testing()
 
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+include(cmake/StaticQt.cmake)
+
 find_package(gflags REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Protobuf REQUIRED)
-find_package(Qt5Concurrent)
-find_package(Qt5Core)
 find_library(GLOG_LIBRARY glog)
 find_library(GFLAGS_LIBRARY gflags)
 find_library(UNWIND_LIBRARY unwind)
@@ -89,12 +87,7 @@ add_library(tracerlib OBJECT
 )
 
 target_include_directories(tracerlib PUBLIC
-  $<TARGET_PROPERTY:Qt5::Core,INTERFACE_INCLUDE_DIRECTORIES>
-  $<TARGET_PROPERTY:Qt5::Concurrent,INTERFACE_INCLUDE_DIRECTORIES>
-)
-target_compile_definitions(tracerlib PUBLIC
-  $<TARGET_PROPERTY:Qt5::Core,INTERFACE_COMPILE_DEFINITIONS>
-  $<TARGET_PROPERTY:Qt5::Concurrent,INTERFACE_COMPILE_DEFINITIONS>
+  $<TARGET_PROPERTY:Qt5,INTERFACE_INCLUDE_DIRECTORIES>
 )
 set_target_properties(tracerlib PROPERTIES
   POSITION_INDEPENDENT_CODE ON
@@ -105,8 +98,7 @@ add_executable(tracer
   src/main.cc
 )
 target_link_libraries(tracer
-  Qt5::Core
-  Qt5::Concurrent
+  Qt5
   ${CMAKE_THREAD_LIBS_INIT}
   ${GLOG_LIBRARY}
   ${GFLAGS_LIBRARY}

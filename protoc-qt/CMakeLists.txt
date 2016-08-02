@@ -24,7 +24,7 @@ add_library(generator STATIC ${GENERATOR_SOURCES})
 add_executable(protoc-qt compiler/cli_main.cc)
 target_link_libraries(protoc-qt
   generator
-  Qt5::Core
+  Qt5
   ${PROTOBUF_PROTOC_LIBRARY}
   ${PROTOBUF_LIBRARY}
 )
@@ -35,6 +35,6 @@ set(RUNTIME_SOURCES
 
 add_library(protobuf_qt ${RUNTIME_SOURCES})
 target_link_libraries(protobuf_qt
-  Qt5::Core
+  Qt5
   ${PROTOBUF_LIBRARY}
 )

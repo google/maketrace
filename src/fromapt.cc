@@ -62,8 +62,7 @@ bool FromApt::Run() {
   ts << QString(
       "FROM ubuntu:trusty\n"
       "RUN mkdir /source /output\n"
-      "RUN apt-get update && apt-get install -y libqt5core5a "
-          "libqt5concurrent5\n"
+      "RUN apt-get update && apt-get install -y build-essential\n"
       "RUN apt-get update && apt-get build-dep -y %1\n"
       "RUN cd /source && apt-get update && apt-get source %1\n"
       "RUN cp -ar /source/*/* /source/\n"
@@ -103,49 +102,20 @@ bool FromApt::Run() {
     return false;
   }
 
-  // Guess the buildsystem.
-  const Buildsystem buildsystem = GuessBuildsystem();
-  switch (buildsystem) {
-  case Buildsystem::Autotools: {
-    if (!RunTracer({"trace", "/output/configure", "./configure"})) {
-      LOG(ERROR) << "configure failed";
-      return false;
-    }
-
-    // Replace the 'missing' and 'config.status' scripts with empty shell
-    // scripts to prevent 'make' from rerunning './configure'.
-    WriteEmptyShellScript("config.status");
-    WriteEmptyShellScript("missing");
-
-    if (!RunTracer({"trace", "/output/make", "make"})) {
-      LOG(ERROR) << "make failed";
-      return false;
-    }
-    if (!RunTracer({"trace", "/output/install", "make", "install"})) {
-      LOG(ERROR) << "install failed";
-      return false;
-    }
-    break;
+  // Run configure.
+  if (!RunTracer({"trace", "/output/configure", "make", "-f", "debian/rules",
+                  "configure"})) {
+    LOG(ERROR) << "configure failed";
+    return false;
   }
-
-  case Buildsystem::CMake: {
-    if (!RunTracer({"trace", "/output/configure", "cmake", "."})) {
-      LOG(ERROR) << "cmake failed";
-      return false;
-    }
-    if (!RunTracer({"trace", "/output/make", "make"})) {
-      LOG(ERROR) << "make failed";
-      return false;
-    }
-    if (!RunTracer({"trace", "/output/install", "make", "install"})) {
-      LOG(ERROR) << "install failed";
-      return false;
-    }
-    break;
+  if (!RunTracer({"trace", "/output/make", "make", "-f", "debian/rules",
+                 "build"})) {
+    LOG(ERROR) << "make failed";
+    return false;
   }
-
-  default:
-    LOG(ERROR) << "unsupported buildsystem: " << int(buildsystem);
+  if (!RunTracer({"trace", "/output/install",  "make", "-f", "debian/rules",
+                 "install"})) {
+    LOG(ERROR) << "install failed";
     return false;
   }
 

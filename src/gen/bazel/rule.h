@@ -52,6 +52,7 @@ class Rule {
   static void SetAttribute(const QString& attribute_name,
                            const QSet<QString>& items,
                            blaze_query::Rule* rule);
+  static QSet<QString> EscapeShellArgs(const QSet<QString>& args);
 
   Label label_;
   QString type_;

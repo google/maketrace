@@ -38,6 +38,18 @@ void Rule::SetAttribute(const QString& attribute_name,
   attr->set_string_list_value(list);
 }
 
+QSet<QString> Rule::EscapeShellArgs(const QSet<QString>& args) {
+  QSet<QString> ret;
+  for (QString arg : args) {
+    if (arg.contains('"') || arg.contains('\'')) {
+      arg = arg.replace('\'', "\\'");
+      arg = "'" + arg + "'";
+    }
+    ret.insert(arg);
+  }
+  return ret;
+}
+
 blaze_query::Rule Rule::ToProto() const {
   blaze_query::Rule pb;
 
@@ -46,8 +58,8 @@ blaze_query::Rule Rule::ToProto() const {
 
   SetAttribute("srcs", srcs_, &pb);
   SetAttribute("deps", deps_, &pb);
-  SetAttribute("copts", copts_, &pb);
-  SetAttribute("linkopts", linkopts_, &pb);
+  SetAttribute("copts", EscapeShellArgs(copts_), &pb);
+  SetAttribute("linkopts", EscapeShellArgs(linkopts_), &pb);
   SetAttribute("textual_hdrs", textual_hdrs_, &pb);
 
   if (!visibility_.isEmpty()) {
